@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: medical_qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - medical_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # FastAPI Backend
+  backend:
+    build: ./backend
+    container_name: medical_backend
+    ports:
+      - "2000:2000"
+    environment:
+      - SERPER_API_KEY=ebb93c8f37924c0ebb979860e8409e39b275b6d2
+      - GEMINI_API_KEY=AIzaSyDoP0rr2uWZIWiTQqqSg0PgZhM8EtL9Scw
+      - QDRANT_URL=http://qdrant:6333
+      - API_PORT=2000
+    volumes:
+      - backend_uploads:/app/uploads
+    depends_on:
+      - qdrant
+      - redis
+    restart: unless-stopped
+    networks:
+      - medical_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # React Frontend
+  frontend:
+    build: ./frontend
+    container_name: medical_frontend
+    ports:
+      - "1000:1000"
+    environment:
+      - REACT_APP_API_URL=http://backend:2000
+      - PORT=1000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - medical_network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: medical_nginx
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    networks:
+      - medical_network
+
+  # Redis (for caching and session management)
+  redis:
+    image: redis:7-alpine
+    container_name: medical_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - medical_network
+    command: redis-server --appendonly yes
+
+volumes:
+  qdrant_storage:
+    driver: local
+  backend_uploads:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  medical_network:
+    driver: bridge
